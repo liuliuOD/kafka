@@ -43,11 +43,8 @@ import org.apache.kafka.streams.state.VersionedRecord;
 import org.apache.kafka.streams.state.VersionedRecordIterator;
 
 import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
-import org.junit.jupiter.api.TestInfo;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -56,6 +53,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoField;
 import java.util.Collections;
+import java.util.EnumMap;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Optional;
@@ -72,7 +70,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @Tag("integration")
 public class IQv2VersionedStoreIntegrationTest {
     private static final int NUM_BROKERS = 1;
-    private static final String INPUT_TOPIC_NAME = "input-topic";
     private static final String STORE_NAME = "versioned-store";
     private static final Duration HISTORY_RETENTION = Duration.ofDays(1);
     private static final Duration SEGMENT_INTERVAL = Duration.ofHours(1);
@@ -86,123 +83,176 @@ public class IQv2VersionedStoreIntegrationTest {
     private static final Long[] RECORD_TIMESTAMPS = {BASE_TIMESTAMP_LONG, BASE_TIMESTAMP_LONG + 10, BASE_TIMESTAMP_LONG + 20, BASE_TIMESTAMP_LONG + 30};
     private static final int RECORD_NUMBER = RECORD_VALUES.length;
     private static final int LAST_INDEX = RECORD_NUMBER - 1;
-    private Position inputPosition;
-
     public static final EmbeddedKafkaCluster CLUSTER = new EmbeddedKafkaCluster(NUM_BROKERS, Utils.mkProperties(Collections.singletonMap("auto.create.topics.enable", "true")));
 
-    private KafkaStreams kafkaStreams;
-    private String groupProtocol;
+    private static TestContext classicContext;
+    private static TestContext streamsContext;
+    private static EnumMap<TestGroupProtocol, TestContext> contexts;
+
+    private enum TestGroupProtocol {
+        CLASSIC("classic", "iqv2_classic"),
+        STREAMS("streams", "iqv2_streams");
+
+        private final String configValue;
+        private final String testName;
+
+        TestGroupProtocol(final String configValue, final String testName) {
+            this.configValue = configValue;
+            this.testName = testName;
+        }
+    }
+
+    private static final class TestContext {
+        private final TestGroupProtocol groupProtocol;
+        private final String topicName;
+        private final String applicationId;
+        private KafkaStreams kafkaStreams;
+        private Position inputPosition;
+        private boolean stateReady;
+
+        private TestContext(final TestGroupProtocol groupProtocol, final String topicName, final String applicationId) {
+            this.groupProtocol = groupProtocol;
+            this.topicName = topicName;
+            this.applicationId = applicationId;
+        }
+    }
 
     @BeforeAll
     public static void beforeAll() throws Exception {
         CLUSTER.start();
+        final String classicTestName = safeUniqueTestName(TestGroupProtocol.CLASSIC.testName);
+        final String streamsTestName = safeUniqueTestName(TestGroupProtocol.STREAMS.testName);
+        classicContext = createContext(TestGroupProtocol.CLASSIC, "input-topic-" + classicTestName, "app-" + classicTestName);
+        streamsContext = createContext(TestGroupProtocol.STREAMS, "input-topic-" + streamsTestName, "app-" + streamsTestName);
+        contexts = new EnumMap<>(TestGroupProtocol.class);
+        contexts.put(TestGroupProtocol.CLASSIC, classicContext);
+        contexts.put(TestGroupProtocol.STREAMS, streamsContext);
+        prepareTopicAndRecords(classicContext);
+        prepareTopicAndRecords(streamsContext);
+
+        startStreams(classicContext);
+        startStreams(streamsContext);
+        awaitStateStoreReady(classicContext);
+        awaitStateStoreReady(streamsContext);
     }
-    
-    @BeforeEach
-    public void beforeEach() throws Exception {
-        // Delete and recreate the topic to ensure clean state for each test
-        CLUSTER.deleteTopic(INPUT_TOPIC_NAME);
-        CLUSTER.createTopic(INPUT_TOPIC_NAME, 1, 1);
-        
-        // Set up fresh test data
+
+    private static TestContext createContext(final TestGroupProtocol groupProtocol, final String topicName, final String applicationId) {
+        return new TestContext(groupProtocol, topicName, applicationId);
+    }
+
+    private static void prepareTopicAndRecords(final TestContext context) throws Exception {
+        CLUSTER.createTopic(context.topicName, 1, 1);
         final Properties producerProps = new Properties();
         producerProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, CLUSTER.bootstrapServers());
         producerProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, IntegerSerializer.class);
         producerProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, IntegerSerializer.class);
         try (final KafkaProducer<Integer, Integer> producer = new KafkaProducer<>(producerProps)) {
-            producer.send(new ProducerRecord<>(INPUT_TOPIC_NAME, 0,  RECORD_TIMESTAMPS[0], RECORD_KEY, RECORD_VALUES[0])).get();
-            producer.send(new ProducerRecord<>(INPUT_TOPIC_NAME, 0,  RECORD_TIMESTAMPS[1], RECORD_KEY, RECORD_VALUES[1])).get();
-            producer.send(new ProducerRecord<>(INPUT_TOPIC_NAME, 0,  RECORD_TIMESTAMPS[2], RECORD_KEY, RECORD_VALUES[2])).get();
-            producer.send(new ProducerRecord<>(INPUT_TOPIC_NAME, 0,  RECORD_TIMESTAMPS[3], RECORD_KEY, RECORD_VALUES[3])).get();
+            producer.send(new ProducerRecord<>(context.topicName, 0, RECORD_TIMESTAMPS[0], RECORD_KEY, RECORD_VALUES[0])).get();
+            producer.send(new ProducerRecord<>(context.topicName, 0, RECORD_TIMESTAMPS[1], RECORD_KEY, RECORD_VALUES[1])).get();
+            producer.send(new ProducerRecord<>(context.topicName, 0, RECORD_TIMESTAMPS[2], RECORD_KEY, RECORD_VALUES[2])).get();
+            producer.send(new ProducerRecord<>(context.topicName, 0, RECORD_TIMESTAMPS[3], RECORD_KEY, RECORD_VALUES[3])).get();
         }
-        inputPosition = Position.emptyPosition().withComponent(INPUT_TOPIC_NAME, 0, 3);
+        context.inputPosition = Position.emptyPosition().withComponent(context.topicName, 0, 3);
     }
 
-    private void setup(final String groupProtocol, final TestInfo testInfo) {
-        this.groupProtocol = groupProtocol;
+    private static void startStreams(final TestContext context) {
         final StreamsBuilder builder = new StreamsBuilder();
-        builder.table(INPUT_TOPIC_NAME,
+        builder.table(context.topicName,
             Materialized.as(Stores.persistentVersionedKeyValueStore(STORE_NAME, HISTORY_RETENTION, SEGMENT_INTERVAL)));
         final Properties configs = new Properties();
-        final String safeTestName = safeUniqueTestName(testInfo);
-        configs.put(StreamsConfig.APPLICATION_ID_CONFIG, "app-" + safeTestName);
+        configs.put(StreamsConfig.APPLICATION_ID_CONFIG, context.applicationId);
         configs.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, CLUSTER.bootstrapServers());
         configs.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.IntegerSerde.class.getName());
         configs.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.IntegerSerde.class.getName());
-        configs.put(StreamsConfig.GROUP_PROTOCOL_CONFIG, groupProtocol);
-        kafkaStreams = IntegrationTestUtils.getStartedStreams(configs, builder, true);
-    }
-
-    @AfterEach
-    public void afterTest() {
-        if (kafkaStreams != null) {
-            kafkaStreams.close(Duration.ofSeconds(60));
-            kafkaStreams.cleanUp();
-        }
+        configs.put(StreamsConfig.GROUP_PROTOCOL_CONFIG, context.groupProtocol.configValue);
+        context.kafkaStreams = IntegrationTestUtils.getStartedStreams(configs, builder, true);
     }
 
     @AfterAll
     public static void after() {
+        closeStreams(classicContext);
+        closeStreams(streamsContext);
         CLUSTER.stop();
+    }
+
+    private static void closeStreams(final TestContext context) {
+        if (context != null && context.kafkaStreams != null) {
+            context.kafkaStreams.close(Duration.ofSeconds(60));
+            context.kafkaStreams.cleanUp();
+        }
     }
 
     private static Stream<Arguments> groupProtocolParameters() {
         return Stream.of(
-            Arguments.of("classic", "CLASSIC protocol"),
-            Arguments.of("streams", "STREAMS protocol")
+            Arguments.of(TestGroupProtocol.CLASSIC, "CLASSIC protocol"),
+            Arguments.of(TestGroupProtocol.STREAMS, "STREAMS protocol")
         );
     }
 
     @ParameterizedTest(name = "{1}")
     @MethodSource("groupProtocolParameters")
-    public void verifyStore(final String groupProtocol, final String testName, final TestInfo testInfo) throws Exception {
-        // Set up streams
-        setup(groupProtocol, testInfo);
-        
+    public void verifyStore(final TestGroupProtocol groupProtocol, final String testName) throws Exception {
+        final TestContext context = contexts.get(groupProtocol);
         /* Test Versioned Key Queries */
         // retrieve the latest value
-        shouldHandleVersionedKeyQuery(Optional.empty(), RECORD_VALUES[3], RECORD_TIMESTAMPS[3], Optional.empty());
-        shouldHandleVersionedKeyQuery(Optional.of(Instant.now()), RECORD_VALUES[3], RECORD_TIMESTAMPS[3], Optional.empty());
-        shouldHandleVersionedKeyQuery(Optional.of(Instant.ofEpochMilli(RECORD_TIMESTAMPS[3])), RECORD_VALUES[3], RECORD_TIMESTAMPS[3], Optional.empty());
+        shouldHandleVersionedKeyQuery(context, Optional.empty(), RECORD_VALUES[3], RECORD_TIMESTAMPS[3], Optional.empty());
+        shouldHandleVersionedKeyQuery(context, Optional.of(Instant.now()), RECORD_VALUES[3], RECORD_TIMESTAMPS[3], Optional.empty());
+        shouldHandleVersionedKeyQuery(context, Optional.of(Instant.ofEpochMilli(RECORD_TIMESTAMPS[3])), RECORD_VALUES[3], RECORD_TIMESTAMPS[3], Optional.empty());
         // retrieve the old value
-        shouldHandleVersionedKeyQuery(Optional.of(Instant.ofEpochMilli(RECORD_TIMESTAMPS[0])), RECORD_VALUES[0], RECORD_TIMESTAMPS[0], Optional.of(RECORD_TIMESTAMPS[1]));
+        shouldHandleVersionedKeyQuery(context, Optional.of(Instant.ofEpochMilli(RECORD_TIMESTAMPS[0])), RECORD_VALUES[0], RECORD_TIMESTAMPS[0], Optional.of(RECORD_TIMESTAMPS[1]));
         // there is no record for the provided timestamp
-        shouldVerifyGetNullForVersionedKeyQuery(RECORD_KEY, Instant.ofEpochMilli(RECORD_TIMESTAMPS[0] - 50));
+        shouldVerifyGetNullForVersionedKeyQuery(context, RECORD_KEY, Instant.ofEpochMilli(RECORD_TIMESTAMPS[0] - 50));
         // there is no record with this key
-        shouldVerifyGetNullForVersionedKeyQuery(NON_EXISTING_KEY, Instant.now());
+        shouldVerifyGetNullForVersionedKeyQuery(context, NON_EXISTING_KEY, Instant.now());
 
         /* Test Multi Versioned Key Queries */
         // retrieve all existing values
-        shouldHandleMultiVersionedKeyQuery(Optional.empty(), Optional.empty(), ResultOrder.ANY, 0, LAST_INDEX);
+        shouldHandleMultiVersionedKeyQuery(context, Optional.empty(), Optional.empty(), ResultOrder.ANY, 0, LAST_INDEX);
         // retrieve all existing values in ascending order
-        shouldHandleMultiVersionedKeyQuery(Optional.empty(), Optional.empty(), ResultOrder.ASCENDING, 0, LAST_INDEX);
+        shouldHandleMultiVersionedKeyQuery(context, Optional.empty(), Optional.empty(), ResultOrder.ASCENDING, 0, LAST_INDEX);
         // retrieve existing values in query defined time range
-        shouldHandleMultiVersionedKeyQuery(Optional.of(Instant.ofEpochMilli(RECORD_TIMESTAMPS[1] + 5)), Optional.of(Instant.now()),
+        shouldHandleMultiVersionedKeyQuery(context, Optional.of(Instant.ofEpochMilli(RECORD_TIMESTAMPS[1] + 5)), Optional.of(Instant.now()),
                                            ResultOrder.ANY, 1, LAST_INDEX);
         // there is no record in the query specified time range
-        shouldVerifyGetNullForMultiVersionedKeyQuery(RECORD_KEY,
+        shouldVerifyGetNullForMultiVersionedKeyQuery(context, RECORD_KEY,
                                                      Optional.of(Instant.ofEpochMilli(RECORD_TIMESTAMPS[0] - 100)), Optional.of(Instant.ofEpochMilli(RECORD_TIMESTAMPS[0] - 50)),
                                                      ResultOrder.ANY);
         // there is no record in the query specified time range even retrieving results in ascending order
-        shouldVerifyGetNullForMultiVersionedKeyQuery(RECORD_KEY,
+        shouldVerifyGetNullForMultiVersionedKeyQuery(context, RECORD_KEY,
                                                      Optional.of(Instant.ofEpochMilli(RECORD_TIMESTAMPS[0] - 100)), Optional.of(Instant.ofEpochMilli(RECORD_TIMESTAMPS[0] - 50)),
                                                      ResultOrder.ASCENDING);
         // there is no record with this key
-        shouldVerifyGetNullForMultiVersionedKeyQuery(NON_EXISTING_KEY, Optional.empty(), Optional.empty(), ResultOrder.ANY);
+        shouldVerifyGetNullForMultiVersionedKeyQuery(context, NON_EXISTING_KEY, Optional.empty(), Optional.empty(), ResultOrder.ANY);
         // there is no record with this key even retrieving results in ascending order
-        shouldVerifyGetNullForMultiVersionedKeyQuery(NON_EXISTING_KEY, Optional.empty(), Optional.empty(), ResultOrder.ASCENDING);
+        shouldVerifyGetNullForMultiVersionedKeyQuery(context, NON_EXISTING_KEY, Optional.empty(), Optional.empty(), ResultOrder.ASCENDING);
         // test concurrent write while retrieving records
-        shouldHandleRaceCondition();
+        shouldHandleRaceCondition(context);
     }
 
-    private void shouldHandleVersionedKeyQuery(final Optional<Instant> queryTimestamp,
+    private static void awaitStateStoreReady(final TestContext context) {
+        if (context.stateReady) {
+            return;
+        }
+
+        final VersionedKeyQuery<Integer, Integer> query = defineQuery(RECORD_KEY, Optional.empty());
+        final StateQueryRequest<VersionedRecord<Integer>> request = StateQueryRequest.inStore(STORE_NAME)
+            .withQuery(query)
+            .withPositionBound(PositionBound.at(context.inputPosition));
+        final StateQueryResult<VersionedRecord<Integer>> result =
+            IntegrationTestUtils.iqv2WaitForResult(context.kafkaStreams, request);
+        assertTrue(result.getOnlyPartitionResult().isSuccess());
+        context.stateReady = true;
+    }
+
+    private void shouldHandleVersionedKeyQuery(final TestContext context,
+                                               final Optional<Instant> queryTimestamp,
                                                final Integer expectedValue,
                                                final Long expectedTimestamp,
                                                final Optional<Long> expectedValidToTime) {
 
         final VersionedKeyQuery<Integer, Integer> query = defineQuery(RECORD_KEY, queryTimestamp);
 
-        final QueryResult<VersionedRecord<Integer>> queryResult = sendRequestAndReceiveResults(query, kafkaStreams);
+        final QueryResult<VersionedRecord<Integer>> queryResult = sendRequestAndReceiveResults(context, query);
 
         // verify results
         if (queryResult == null) {
@@ -223,17 +273,18 @@ public class IQv2VersionedStoreIntegrationTest {
         assertTrue(queryResult.getExecutionInfo().isEmpty());
     }
 
-    private void shouldVerifyGetNullForVersionedKeyQuery(final Integer key, final Instant queryTimestamp) {
+    private void shouldVerifyGetNullForVersionedKeyQuery(final TestContext context, final Integer key, final Instant queryTimestamp) {
         final VersionedKeyQuery<Integer, Integer> query = defineQuery(key, Optional.of(queryTimestamp));
-        assertNull(sendRequestAndReceiveResults(query, kafkaStreams));
+        assertNull(sendRequestAndReceiveResults(context, query));
     }
 
-    private void shouldHandleMultiVersionedKeyQuery(final Optional<Instant> fromTime, final Optional<Instant> toTime,
+    private void shouldHandleMultiVersionedKeyQuery(final TestContext context,
+                                                    final Optional<Instant> fromTime, final Optional<Instant> toTime,
                                                     final ResultOrder order, final int expectedArrayLowerBound, final int expectedArrayUpperBound) {
 
         final MultiVersionedKeyQuery<Integer, Integer> query = defineQuery(RECORD_KEY, fromTime, toTime, order);
 
-        final Map<Integer, QueryResult<VersionedRecordIterator<Integer>>> partitionResults = sendRequestAndReceiveResults(query, kafkaStreams);
+        final Map<Integer, QueryResult<VersionedRecordIterator<Integer>>> partitionResults = sendRequestAndReceiveResults(context, query);
 
         // verify results
         for (final Entry<Integer, QueryResult<VersionedRecordIterator<Integer>>> partitionResultsEntry : partitionResults.entrySet()) {
@@ -260,10 +311,12 @@ public class IQv2VersionedStoreIntegrationTest {
         }
     }
 
-    private void shouldVerifyGetNullForMultiVersionedKeyQuery(final Integer key, final Optional<Instant> fromTime, final Optional<Instant> toTime, final ResultOrder order) {
+    private void shouldVerifyGetNullForMultiVersionedKeyQuery(final TestContext context,
+                                                              final Integer key, final Optional<Instant> fromTime,
+                                                              final Optional<Instant> toTime, final ResultOrder order) {
         final MultiVersionedKeyQuery<Integer, Integer> query = defineQuery(key, fromTime, toTime, order);
 
-        final Map<Integer, QueryResult<VersionedRecordIterator<Integer>>> partitionResults = sendRequestAndReceiveResults(query, kafkaStreams);
+        final Map<Integer, QueryResult<VersionedRecordIterator<Integer>>> partitionResults = sendRequestAndReceiveResults(context, query);
 
         // verify results
         for (final Entry<Integer, QueryResult<VersionedRecordIterator<Integer>>> partitionResultsEntry : partitionResults.entrySet()) {
@@ -277,12 +330,12 @@ public class IQv2VersionedStoreIntegrationTest {
      * This method updates a record value in an existing timestamp, while it is retrieving records.
      * Since IQv2 guarantees snapshot semantics, we expect that the old value is retrieved.
      */
-    private void shouldHandleRaceCondition() {
+    private void shouldHandleRaceCondition(final TestContext context) {
         final MultiVersionedKeyQuery<Integer, Integer> query = defineQuery(RECORD_KEY, Optional.empty(), Optional.empty(), ResultOrder.ANY);
 
         // For race condition test, we don't use position bounds since we're testing concurrent updates
         final StateQueryRequest<VersionedRecordIterator<Integer>> request = StateQueryRequest.inStore(STORE_NAME).withQuery(query);
-        final StateQueryResult<VersionedRecordIterator<Integer>> result = IntegrationTestUtils.iqv2WaitForResult(kafkaStreams, request);
+        final StateQueryResult<VersionedRecordIterator<Integer>> result = IntegrationTestUtils.iqv2WaitForResult(context.kafkaStreams, request);
         final Map<Integer, QueryResult<VersionedRecordIterator<Integer>>> partitionResults = result.getPartitionResults();
 
         // verify results in two steps
@@ -310,7 +363,7 @@ public class IQv2VersionedStoreIntegrationTest {
                 }
 
                 // update the value of the oldest record
-                updateRecordValue();
+                updateRecordValue(context);
 
                 // step 2: continue reading records from through the already opened iterator
                 while (iterator.hasNext()) {
@@ -355,15 +408,17 @@ public class IQv2VersionedStoreIntegrationTest {
         return query;
     }
 
-    private Map<Integer, QueryResult<VersionedRecordIterator<Integer>>> sendRequestAndReceiveResults(final MultiVersionedKeyQuery<Integer, Integer> query, final KafkaStreams kafkaStreams) {
-        final StateQueryRequest<VersionedRecordIterator<Integer>> request = StateQueryRequest.inStore(STORE_NAME).withQuery(query).withPositionBound(PositionBound.at(inputPosition));
-        final StateQueryResult<VersionedRecordIterator<Integer>> result = IntegrationTestUtils.iqv2WaitForResult(kafkaStreams, request);
+    private Map<Integer, QueryResult<VersionedRecordIterator<Integer>>> sendRequestAndReceiveResults(final TestContext context,
+                                                                                                      final MultiVersionedKeyQuery<Integer, Integer> query) {
+        final StateQueryRequest<VersionedRecordIterator<Integer>> request = StateQueryRequest.inStore(STORE_NAME).withQuery(query).withPositionBound(PositionBound.at(context.inputPosition));
+        final StateQueryResult<VersionedRecordIterator<Integer>> result = IntegrationTestUtils.iqv2WaitForResult(context.kafkaStreams, request);
         return result.getPartitionResults();
     }
 
-    private QueryResult<VersionedRecord<Integer>> sendRequestAndReceiveResults(final VersionedKeyQuery<Integer, Integer> query, final KafkaStreams kafkaStreams) {
-        final StateQueryRequest<VersionedRecord<Integer>> request = StateQueryRequest.inStore(STORE_NAME).withQuery(query).withPositionBound(PositionBound.at(inputPosition));
-        final StateQueryResult<VersionedRecord<Integer>> result = IntegrationTestUtils.iqv2WaitForResult(kafkaStreams, request);
+    private QueryResult<VersionedRecord<Integer>> sendRequestAndReceiveResults(final TestContext context,
+                                                                                final VersionedKeyQuery<Integer, Integer> query) {
+        final StateQueryRequest<VersionedRecord<Integer>> request = StateQueryRequest.inStore(STORE_NAME).withQuery(query).withPositionBound(PositionBound.at(context.inputPosition));
+        final StateQueryResult<VersionedRecord<Integer>> result = IntegrationTestUtils.iqv2WaitForResult(context.kafkaStreams, request);
         return result.getOnlyPartitionResult();
     }
 
@@ -380,18 +435,18 @@ public class IQv2VersionedStoreIntegrationTest {
     /**
      * This method inserts a new value (999999) for the key in the oldest timestamp (RECORD_TIMESTAMPS[0]).
      */
-    private void updateRecordValue() {
+    private void updateRecordValue(final TestContext context) {
         // update the record value at RECORD_TIMESTAMPS[0]
         final Properties producerProps = new Properties();
         producerProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, CLUSTER.bootstrapServers());
         producerProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, IntegerSerializer.class);
         producerProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, IntegerSerializer.class);
         try (final KafkaProducer<Integer, Integer> producer = new KafkaProducer<>(producerProps)) {
-            producer.send(new ProducerRecord<>(INPUT_TOPIC_NAME, 0, RECORD_TIMESTAMPS[0], RECORD_KEY, 999999));
+            producer.send(new ProducerRecord<>(context.topicName, 0, RECORD_TIMESTAMPS[0], RECORD_KEY, 999999));
         }
 
-        inputPosition = inputPosition.withComponent(INPUT_TOPIC_NAME, 0, 4);
-        assertEquals(Position.emptyPosition().withComponent(INPUT_TOPIC_NAME, 0, 4), inputPosition);
+        context.inputPosition = context.inputPosition.withComponent(context.topicName, 0, 4);
+        assertEquals(Position.emptyPosition().withComponent(context.topicName, 0, 4), context.inputPosition);
 
         // make sure that the new value is picked up by the store
         final Properties consumerProps = new Properties();
@@ -401,7 +456,7 @@ public class IQv2VersionedStoreIntegrationTest {
         consumerProps.setProperty(ConsumerConfig.GROUP_ID_CONFIG, "foo");
         consumerProps.setProperty(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         try {
-            IntegrationTestUtils.waitUntilMinRecordsReceived(consumerProps, INPUT_TOPIC_NAME, RECORD_NUMBER + 1);
+            IntegrationTestUtils.waitUntilMinRecordsReceived(consumerProps, context.topicName, RECORD_NUMBER + 1);
         } catch (final Exception e) {
             throw new RuntimeException(e);
         }
