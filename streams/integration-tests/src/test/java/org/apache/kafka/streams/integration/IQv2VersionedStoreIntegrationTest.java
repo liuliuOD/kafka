@@ -58,6 +58,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Stream;
 
 import static org.apache.kafka.streams.utils.TestUtils.safeUniqueTestName;
@@ -130,10 +131,10 @@ public class IQv2VersionedStoreIntegrationTest {
         prepareTopicAndRecords(classicContext);
         prepareTopicAndRecords(streamsContext);
 
-        startStreams(classicContext);
-        startStreams(streamsContext);
-        awaitStateStoreReady(classicContext);
-        awaitStateStoreReady(streamsContext);
+        CompletableFuture.allOf(
+            CompletableFuture.runAsync(() -> startStreams(classicContext)),
+            CompletableFuture.runAsync(() -> startStreams(streamsContext))
+        ).join();
     }
 
     private static TestContext createContext(final TestGroupProtocol groupProtocol, final String topicName, final String applicationId) {
@@ -193,6 +194,8 @@ public class IQv2VersionedStoreIntegrationTest {
     @MethodSource("groupProtocolParameters")
     public void verifyStore(final TestGroupProtocol groupProtocol, final String testName) throws Exception {
         final TestContext context = contexts.get(groupProtocol);
+        awaitStateStoreReady(context);
+
         /* Test Versioned Key Queries */
         // retrieve the latest value
         shouldHandleVersionedKeyQuery(context, Optional.empty(), RECORD_VALUES[3], RECORD_TIMESTAMPS[3], Optional.empty());
