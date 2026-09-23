@@ -57,7 +57,10 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
+import joptsimple.OptionException;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anySet;
@@ -72,6 +75,12 @@ public class ConsumerGroupServiceTest {
     public static final int NUM_PARTITIONS = 10;
 
     private static final List<String> TOPICS = IntStream.range(0, 5).mapToObj(i -> "testTopic" + i).toList();
+
+    @Test
+    public void testListWithUnrecognizedNewConsumerOption() {
+        String[] args = {"--new-consumer", "--bootstrap-server", "localhost:9092", "--list"};
+        assertThrows(OptionException.class, () -> ConsumerGroupCommandOptions.fromArgs(args));
+    }
 
     private static final List<TopicPartition> TOPIC_PARTITIONS = TOPICS.stream()
             .flatMap(topic -> IntStream.range(0, NUM_PARTITIONS).mapToObj(i -> new TopicPartition(topic, i)))

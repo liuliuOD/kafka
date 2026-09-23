@@ -183,14 +183,14 @@ public class ClusterToolTest {
         }
     }
 
-    @ClusterTest
-    public void testCommandConfigAndDeprecatedConfigPresent(ClusterInstance clusterInstance) throws IOException {
+    @Test
+    public void testCommandConfigAndDeprecatedConfigPresent() throws IOException {
         File configFile = TestUtils.tempFile("client.id=my-client");
 
         ArgumentParserException ex = assertThrows(ArgumentParserException.class, () ->
             ClusterTool.execute(
                 "cluster-id",
-                "--bootstrap-server", clusterInstance.bootstrapServers(),
+                "--bootstrap-server", "localhost:9092",
                 "--config", configFile.getAbsolutePath(),
                 "--command-config", configFile.getAbsolutePath()
             )

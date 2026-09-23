@@ -29,11 +29,14 @@ import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.internals.Topic;
 import org.apache.kafka.common.record.internal.DefaultRecord;
 import org.apache.kafka.common.record.internal.DefaultRecordBatch;
+import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.test.ClusterInstance;
 import org.apache.kafka.common.test.api.ClusterConfigProperty;
 import org.apache.kafka.common.test.api.ClusterTest;
 import org.apache.kafka.common.test.api.ClusterTestDefaults;
 import org.apache.kafka.common.test.api.Type;
+
+import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
 import java.util.List;
@@ -157,13 +160,14 @@ public class ProducerFailureHandlingTest {
     /**
      * With incorrect broker-list the future metadata should return ExecutionException caused by TimeoutException
      */
-    @ClusterTest
-    public void testWrongBrokerList(ClusterInstance clusterInstance) throws InterruptedException {
-        clusterInstance.createTopic(topic1, 1, (short) 1);
+    @Test
+    public void testWrongBrokerList() {
         // producer with incorrect broker list
         Map<String, Object> producerConfig = new HashMap<>(producerConfig(1));
         producerConfig.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:8686,localhost:4242");
-        try (Producer<byte[], byte[]> producer = clusterInstance.producer(producerConfig)) {
+        producerConfig.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
+        producerConfig.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, ByteArraySerializer.class.getName());
+        try (Producer<byte[], byte[]> producer = new KafkaProducer<>(producerConfig)) {
             // send a record with incorrect broker list
             ProducerRecord<byte[], byte[]> record =
                     new ProducerRecord<>(topic1, null, "key".getBytes(), "value".getBytes());

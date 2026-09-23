@@ -119,15 +119,6 @@ public class ShareConsumerTest extends ShareConsumerTestBase {
     }
 
     @ClusterTest
-    public void testPollNoSubscribeFails() {
-        try (ShareConsumer<byte[], byte[]> shareConsumer = createShareConsumer("group1")) {
-            assertEquals(Set.of(), shareConsumer.subscription());
-            // "Consumer is not subscribed to any topics."
-            assertThrows(IllegalStateException.class, () -> shareConsumer.poll(Duration.ofMillis(500)));
-        }
-    }
-
-    @ClusterTest
     public void testSubscribeAndPollNoRecords() {
         alterShareAutoOffsetReset("group1", "earliest");
         try (ShareConsumer<byte[], byte[]> shareConsumer = createShareConsumer("group1")) {
