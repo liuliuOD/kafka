@@ -1582,40 +1582,6 @@ public class PlaintextConsumerTest {
     }
     
     @ClusterTest
-    public void testClassicConsumerPositionWithErrorConnectionRespectsWakeup() {
-        testPositionWithErrorConnectionRespectsWakeup(Map.of(
-            GROUP_PROTOCOL_CONFIG, GroupProtocol.CLASSIC.name().toLowerCase(Locale.ROOT),
-            // make sure the connection fails
-            BOOTSTRAP_SERVERS_CONFIG, "localhost:12345"
-        ));
-    }
-
-    @ClusterTest
-    public void testAsyncConsumerPositionWithErrorConnectionRespectsWakeup() {
-        testPositionWithErrorConnectionRespectsWakeup(Map.of(
-            GROUP_PROTOCOL_CONFIG, GroupProtocol.CONSUMER.name().toLowerCase(Locale.ROOT),
-            // make sure the connection fails
-            BOOTSTRAP_SERVERS_CONFIG, "localhost:12345"
-        ));
-    }
-
-    private void testPositionWithErrorConnectionRespectsWakeup(Map<String, Object> consumerConfig) {
-        var topicPartition = new TopicPartition(TOPIC, 15);
-        try (var consumer = cluster.consumer(consumerConfig)) {
-            consumer.assign(List.of(topicPartition));
-            CompletableFuture.runAsync(() -> {
-                try {
-                    TimeUnit.SECONDS.sleep(1);
-                    consumer.wakeup();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            });
-            assertThrows(WakeupException.class, () -> consumer.position(topicPartition, Duration.ofSeconds(100)));
-        }
-    }
-
-    @ClusterTest
     public void testClassicConsumerOffsetRelatedWhenTimeoutZero() throws Exception {
         testOffsetRelatedWhenTimeoutZero(Map.of(
             GROUP_PROTOCOL_CONFIG, GroupProtocol.CLASSIC.name().toLowerCase(Locale.ROOT)

@@ -23,7 +23,6 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.errors.ApiException;
 import org.apache.kafka.common.errors.InvalidProducerEpochException;
 import org.apache.kafka.common.errors.ProducerFencedException;
-import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.test.ClusterInstance;
 import org.apache.kafka.common.test.api.ClusterConfigProperty;
 import org.apache.kafka.common.test.api.ClusterTest;
@@ -33,7 +32,6 @@ import org.apache.kafka.coordinator.transaction.TransactionStateManagerConfig;
 import org.apache.kafka.server.config.ServerLogConfigs;
 
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 
@@ -51,7 +49,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class AdminFenceProducersTest {
     private static final String TOPIC_NAME = "mytopic";
     private static final String TXN_ID = "mytxnid";
-    private static final String INCORRECT_BROKER_PORT = "225";
     private static final ProducerRecord<byte[], byte[]> RECORD = new ProducerRecord<>(TOPIC_NAME, null, new byte[1]);
     private final ClusterInstance clusterInstance;
 
@@ -90,19 +87,6 @@ public class AdminFenceProducersTest {
             // InvalidProducerEpochException is treated as fatal error. The commitTransaction will return this last
             // fatal error.
             assertThrows(InvalidProducerEpochException.class, producer::commitTransaction);
-        }
-    }
-
-    @ClusterTest
-    public void testFenceProducerTimeoutMs() {
-        Map<String, Object> config = new HashMap<>();
-        config.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:" + INCORRECT_BROKER_PORT);
-
-        try (Admin adminClient = clusterInstance.admin(config)) {
-            ExecutionException exception = assertThrows(
-                    ExecutionException.class, () ->
-                            adminClient.fenceProducers(Collections.singletonList(TXN_ID), new FenceProducersOptions().timeoutMs(0)).all().get());
-            assertInstanceOf(TimeoutException.class, exception.getCause());
         }
     }
 

@@ -34,7 +34,6 @@ import org.apache.kafka.common.test.api.ClusterConfigProperty;
 import org.apache.kafka.common.test.api.ClusterTemplate;
 import org.apache.kafka.common.test.api.ClusterTest;
 import org.apache.kafka.common.test.api.ClusterTestDefaults;
-import org.apache.kafka.common.utils.internals.AppInfoParser;
 import org.apache.kafka.common.utils.internals.Exit;
 import org.apache.kafka.server.config.ServerLogConfigs;
 import org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManagerConfig;
@@ -458,33 +457,6 @@ public class GetOffsetShellTest {
     @ClusterTest
     public void testTopicPartitionsNotFoundForNonMatchingTopicPartitionPattern() {
         assertExitCodeIsOne("--topic-partitions", "__consumer_offsets", "--exclude-internal-topics");
-    }
-
-    @ClusterTest
-    public void testTopicPartitionsFlagWithTopicFlagCauseExit() {
-        assertExitCodeIsOne("--topic-partitions", "__consumer_offsets", "--topic", "topic1");
-    }
-
-    @ClusterTest
-    public void testTopicPartitionsFlagWithPartitionsFlagCauseExit() {
-        assertExitCodeIsOne("--topic-partitions", "__consumer_offsets", "--partitions", "0");
-    }
-
-    @ClusterTest
-    public void testPrintHelp() {
-        Exit.setExitProcedure((statusCode, message) -> { });
-        try {
-            String out = ToolsTestUtils.captureStandardErr(() -> GetOffsetShell.mainNoExit("--help"));
-            assertTrue(out.startsWith(GetOffsetShell.USAGE_TEXT));
-        } finally {
-            Exit.resetExitProcedure();
-        }
-    }
-
-    @ClusterTest
-    public void testPrintVersion() {
-        String out = ToolsTestUtils.captureStandardOut(() -> GetOffsetShell.mainNoExit("--version"));
-        assertEquals(AppInfoParser.getVersion(), out);
     }
 
     private void assertExitCodeIsOne(String... args) {

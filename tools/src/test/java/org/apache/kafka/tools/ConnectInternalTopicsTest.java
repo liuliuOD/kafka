@@ -23,6 +23,7 @@ import org.apache.kafka.common.test.ClusterInstance;
 import org.apache.kafka.common.test.api.ClusterTest;
 import org.apache.kafka.test.TestUtils;
 
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayOutputStream;
@@ -68,19 +69,19 @@ public class ConnectInternalTopicsTest {
         }
     }
 
-    @ClusterTest
+    @Test
     void testNoWorkerConfig() {
         var res = runCommand("create");
         assertNotEquals(0, res.returnCode);
     }
 
-    @ClusterTest
+    @Test
     void testWorkerConfigBlank() {
         var res = runCommand("create", "--worker-config", "");
         assertNotEquals(0, res.returnCode);
     }
 
-    @ClusterTest
+    @Test
     void testWorkerConfigFileDoesNotExist() {
         var nonExistentPath = workspace.resolve("nonexistent-worker.properties").toString();
         var res = runCommand("create", "--worker-config", nonExistentPath);
@@ -88,20 +89,20 @@ public class ConnectInternalTopicsTest {
         assertTrue(res.err.contains("Unable to read worker config"));
     }
 
-    @ClusterTest(brokers = 3)
-    void testNoTopicNamesInWorkerConfig(ClusterInstance cluster) throws IOException {
+    @Test
+    void testNoTopicNamesInWorkerConfig() throws IOException {
         var properties = new Properties();
-        properties.setProperty("bootstrap.servers", cluster.bootstrapServers());
+        properties.setProperty("bootstrap.servers", "localhost:9092");
         var configPath = setupWorkerConfig(workspace.resolve("worker-no-topics.properties"), properties);
         var res = runCommand("create", "--worker-config", configPath.toString());
         assertNotEquals(0, res.returnCode);
         assertEquals("Missing required configuration \"offset.storage.topic\" which has no default value.\n", res.err);
     }
 
-    @ClusterTest(brokers = 3)
-    void testEmptyTopicNamesInWorkerConfig(ClusterInstance cluster) throws IOException {
+    @Test
+    void testEmptyTopicNamesInWorkerConfig() throws IOException {
         var properties = new Properties();
-        properties.setProperty("bootstrap.servers", cluster.bootstrapServers());
+        properties.setProperty("bootstrap.servers", "localhost:9092");
         properties.setProperty("config.storage.topic", "config");
         properties.setProperty("status.storage.topic", "status");
         properties.setProperty("offset.storage.topic", "");

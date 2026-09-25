@@ -38,6 +38,8 @@ import org.apache.kafka.common.test.api.ClusterTestDefaults;
 import org.apache.kafka.common.test.api.Type;
 import org.apache.kafka.test.TestUtils;
 
+import org.junit.jupiter.api.Test;
+
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
@@ -670,11 +672,11 @@ public class ResetConsumerGroupOffsetTest {
         }
     }
 
-    @ClusterTest
-    public void testResetWithUnrecognizedNewConsumerOption(ClusterInstance cluster) {
+    @Test
+    public void testResetWithUnrecognizedNewConsumerOption() {
         String group = generateRandomGroupId();
         String[] cgcArgs = new String[]{"--new-consumer",
-            "--bootstrap-server", cluster.bootstrapServers(),
+            "--bootstrap-server", "localhost:9092",
             "--reset-offsets", "--group", group, "--all-topics",
             "--to-offset", "2", "--export"};
         assertThrows(OptionException.class, () -> getConsumerGroupService(cgcArgs));

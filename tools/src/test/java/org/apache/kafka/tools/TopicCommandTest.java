@@ -22,6 +22,7 @@ import org.apache.kafka.clients.admin.AdminClientTestUtils;
 import org.apache.kafka.clients.admin.Config;
 import org.apache.kafka.clients.admin.ConfigEntry;
 import org.apache.kafka.clients.admin.CreatePartitionsResult;
+import org.apache.kafka.clients.admin.CreateTopicsOptions;
 import org.apache.kafka.clients.admin.CreateTopicsResult;
 import org.apache.kafka.clients.admin.DeleteTopicsOptions;
 import org.apache.kafka.clients.admin.DeleteTopicsResult;
@@ -338,6 +339,22 @@ public class TopicCommandTest {
         return new TopicCommand.TopicCommandOptions(finalOptions);
     }
 
+    private TopicCommand.TopicCommandOptions buildTopicCommandOptions(String... opts) {
+        String[] finalOptions = Stream.concat(Arrays.stream(opts),
+                Stream.of("--bootstrap-server", bootstrapServer)
+        ).toArray(String[]::new);
+        return new TopicCommand.TopicCommandOptions(finalOptions);
+    }
+
+    private void assertTopicCreationFailsBeforeAdmin(String... opts) throws Exception {
+        Admin adminClient = mock(Admin.class);
+        try (TopicCommand.TopicService topicService = new TopicCommand.TopicService(adminClient)) {
+            assertThrows(IllegalArgumentException.class,
+                    () -> topicService.createTopic(buildTopicCommandOptions(opts)));
+            verify(adminClient, times(0)).createTopics(anyCollection(), any(CreateTopicsOptions.class));
+        }
+    }
+
     static List<ClusterConfig> generate() {
         Map<String, String> serverProp = new HashMap<>();
         serverProp.put(REPLICA_FETCH_MAX_BYTES_CONFIG, "1"); // if config name error, no exception throw
@@ -560,37 +577,25 @@ public class TopicCommandTest {
         }
     }
 
-    @ClusterTest(brokers = 3)
-    public void testCreateWithInvalidReplicationFactor(ClusterInstance clusterInstance) throws Exception {
+    @Test
+    public void testCreateWithInvalidReplicationFactor() throws Exception {
         String testTopicName = TestUtils.randomString(10);
-        try (Admin adminClient = clusterInstance.admin();
-             TopicCommand.TopicService topicService = new TopicCommand.TopicService(adminClient)) {
-
-            TopicCommand.TopicCommandOptions opts = buildTopicCommandOptionsWithBootstrap(clusterInstance, "--create", "--partitions", "2", "--replication-factor", Integer.toString(Short.MAX_VALUE + 1),
-                    "--topic", testTopicName);
-            assertThrows(IllegalArgumentException.class, () -> topicService.createTopic(opts), "Expected IllegalArgumentException to throw");
-        }
+        assertTopicCreationFailsBeforeAdmin("--create", "--partitions", "2", "--replication-factor",
+                Integer.toString(Short.MAX_VALUE + 1), "--topic", testTopicName);
     }
 
-    @ClusterTest
-    public void testCreateWithNegativeReplicationFactor(ClusterInstance clusterInstance) throws Exception {
+    @Test
+    public void testCreateWithNegativeReplicationFactor() throws Exception {
         String testTopicName = TestUtils.randomString(10);
-        try (Admin adminClient = clusterInstance.admin();
-             TopicCommand.TopicService topicService = new TopicCommand.TopicService(adminClient)) {
-            TopicCommand.TopicCommandOptions opts = buildTopicCommandOptionsWithBootstrap(clusterInstance, "--create",
-                    "--partitions", "2", "--replication-factor", "-1", "--topic", testTopicName);
-            assertThrows(IllegalArgumentException.class, () -> topicService.createTopic(opts), "Expected IllegalArgumentException to throw");
-        }
+        assertTopicCreationFailsBeforeAdmin("--create", "--partitions", "2", "--replication-factor", "-1",
+                "--topic", testTopicName);
     }
 
-    @ClusterTest
-    public void testCreateWithNegativePartitionCount(ClusterInstance clusterInstance) throws Exception {
+    @Test
+    public void testCreateWithNegativePartitionCount() throws Exception {
         String testTopicName = TestUtils.randomString(10);
-        try (Admin adminClient = clusterInstance.admin();
-             TopicCommand.TopicService topicService = new TopicCommand.TopicService(adminClient)) {
-            TopicCommand.TopicCommandOptions opts = buildTopicCommandOptionsWithBootstrap(clusterInstance, "--create", "--partitions", "-1", "--replication-factor", "1", "--topic", testTopicName);
-            assertThrows(IllegalArgumentException.class, () -> topicService.createTopic(opts), "Expected IllegalArgumentException to throw");
-        }
+        assertTopicCreationFailsBeforeAdmin("--create", "--partitions", "-1", "--replication-factor", "1",
+                "--topic", testTopicName);
     }
 
     @ClusterTest
