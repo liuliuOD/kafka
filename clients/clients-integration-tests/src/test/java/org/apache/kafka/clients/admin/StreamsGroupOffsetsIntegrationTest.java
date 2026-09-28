@@ -58,6 +58,22 @@ public class StreamsGroupOffsetsIntegrationTest {
     private static final int PARTITION_COUNT = 3;
     private static final int RECORD_COUNT = 20;
 
+    private enum NoOpStreamsRebalanceListener implements StreamsRebalanceListener {
+        INSTANCE;
+
+        @Override
+        public void onTasksRevoked(Set<StreamsRebalanceData.TaskId> tasks) {
+        }
+
+        @Override
+        public void onTasksAssigned(StreamsRebalanceData.Assignment assignment) {
+        }
+
+        @Override
+        public void onAllTasksLost() {
+        }
+    }
+
     private final ClusterInstance clusterInstance;
 
     StreamsGroupOffsetsIntegrationTest(ClusterInstance clusterInstance) {
@@ -184,19 +200,7 @@ public class StreamsGroupOffsetsIntegrationTest {
             new ByteArrayDeserializer(),
             Optional.of(streamsRebalanceData)
         );
-        consumer.subscribe(Set.of(topic), new StreamsRebalanceListener() {
-            @Override
-            public void onTasksRevoked(Set<StreamsRebalanceData.TaskId> tasks) {
-            }
-
-            @Override
-            public void onTasksAssigned(StreamsRebalanceData.Assignment assignment) {
-            }
-
-            @Override
-            public void onAllTasksLost() {
-            }
-        });
+        consumer.subscribe(Set.of(topic), NoOpStreamsRebalanceListener.INSTANCE);
         return consumer;
     }
 
