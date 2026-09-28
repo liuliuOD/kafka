@@ -177,18 +177,23 @@ public class StreamsGroupOffsetsIntegrationTest {
         properties.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
         properties.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
 
+        // Keep the topology metadata aligned with the Scala createStreamsGroup fixture this test replaces.
+        Map<String, StreamsRebalanceData.TopicInfo> changelogTopics = Map.of(
+            topic + "-changelog",
+            new StreamsRebalanceData.TopicInfo(Optional.empty(), Optional.empty(), Map.of())
+        );
+        StreamsRebalanceData.Subtopology subtopology = new StreamsRebalanceData.Subtopology(
+            Set.of(topic),
+            Set.of(),
+            Map.of(),
+            changelogTopics,
+            List.of()
+        );
         StreamsRebalanceData streamsRebalanceData = new StreamsRebalanceData(
             UUID.randomUUID(),
             Optional.empty(),
             Optional.empty(),
-            Map.of("subtopology-0", new StreamsRebalanceData.Subtopology(
-                Set.of(topic),
-                Set.of(),
-                Map.of(),
-                Map.of(topic + "-changelog", new StreamsRebalanceData.TopicInfo(
-                    Optional.empty(), Optional.empty(), Map.of())),
-                List.of()
-            )),
+            Map.of("subtopology-0", subtopology),
             Map.of(),
             Map::of,
             Map::of
