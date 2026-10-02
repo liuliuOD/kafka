@@ -303,8 +303,8 @@ public class ClusterTestExtensionsTest {
     public void testVerifyTopicDeletion(ClusterInstance clusterInstance) throws Exception {
         try (Admin admin = clusterInstance.admin()) {
             String testTopic = "testTopic";
-            admin.createTopics(List.of(new NewTopic(testTopic, 1, (short) 1)));
-            clusterInstance.waitTopicCreation(testTopic, 1);
+            admin.createTopics(List.of(new NewTopic(testTopic, 3, (short) 3)));
+            clusterInstance.waitTopicCreation(testTopic, 3);
             admin.deleteTopics(List.of(testTopic));
             clusterInstance.waitTopicDeletion(testTopic);
             Assertions.assertTrue(admin.listTopics().listings().get().stream().noneMatch(

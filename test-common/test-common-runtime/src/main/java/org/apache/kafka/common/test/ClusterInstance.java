@@ -67,6 +67,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static org.apache.kafka.clients.consumer.GroupProtocol.CLASSIC;
@@ -288,16 +289,10 @@ public interface ClusterInstance {
 
         ensureConsistentMetadata(brokers, controllers().values());
 
-        TopicPartition topicPartition = new TopicPartition(topic, 0);
-
-        // Ensure that the topic-partition has been deleted from all brokers' replica managers
+        // ReplicaManager removes partitions before deleting their logs. Waiting for all of the topic's
+        // logs also ensures that all online replicas have been removed, including nonzero partitions.
         TestUtils.waitForCondition(() -> brokers.stream().allMatch(broker ->
-                broker.replicaManager().onlinePartition(topicPartition).isEmpty()
-        ), "Replica manager's should have deleted all of this topic's partitions");
-
-        // Ensure that logs from all replicas are deleted
-        TestUtils.waitForCondition(() -> brokers.stream().allMatch(broker ->
-                broker.logManager().getLog(topicPartition, false).isEmpty()
+                broker.logManager().logsByTopic(topic).isEmpty()
         ), "Replica logs not deleted after delete topic is complete");
 
         // Ensure that the topic is removed from all cleaner offsets
@@ -310,23 +305,35 @@ public interface ClusterInstance {
                 } catch (IOException e) {
                     throw new RuntimeException(e);
                 }
-                return !checkpointFile.read().containsKey(topicPartition);
+                return checkpointFile.read().keySet().stream().noneMatch(topicPartition -> topicPartition.topic().equals(topic));
             });
         }), "Cleaner offset for deleted partition should have been removed");
 
         // Ensure that the topic directories are soft-deleted
+        Pattern topicDirectory = Pattern.compile(Pattern.quote(topic) + "-\\d+");
         TestUtils.waitForCondition(() -> brokers.stream().allMatch(broker ->
                 broker.config().logDirs().stream().allMatch(logDir ->
-                    !new File(logDir, topicPartition.topic() + "-" + topicPartition.partition()).exists())
+                    Arrays.stream(Objects.requireNonNull(new File(logDir).list())).noneMatch(partitionDirectoryName ->
+                        topicDirectory.matcher(partitionDirectoryName).matches()))
         ), "Failed to soft-delete the data to a delete directory");
 
         // Ensure that the topic directories are hard-deleted
         TestUtils.waitForCondition(() -> brokers.stream().allMatch(broker ->
                 broker.config().logDirs().stream().allMatch(logDir ->
                     Arrays.stream(Objects.requireNonNull(new File(logDir).list())).noneMatch(partitionDirectoryName ->
-                        partitionDirectoryName.startsWith(topicPartition.topic() + "-" + topicPartition.partition()) &&
-                            partitionDirectoryName.endsWith(UnifiedLog.DELETE_DIR_SUFFIX)))
+                        isDeletedTopicDirectory(topic, partitionDirectoryName)))
         ), "Failed to hard-delete the delete directory");
+    }
+
+    private static boolean isDeletedTopicDirectory(String topic, String directoryName) {
+        if (!directoryName.endsWith(UnifiedLog.DELETE_DIR_SUFFIX)) {
+            return false;
+        }
+        TopicPartition partition = UnifiedLog.parseTopicPartitionName(new File(directoryName));
+        // Use the same naming rule as log deletion, including truncation of long topic names.
+        String expectedName = UnifiedLog.logDeleteDirName(new TopicPartition(topic, partition.partition()));
+        return directoryName.substring(0, directoryName.lastIndexOf('.'))
+            .equals(expectedName.substring(0, expectedName.lastIndexOf('.')));
     }
 
     default void createTopic(String topicName, int partitions, short replicas) throws InterruptedException {
