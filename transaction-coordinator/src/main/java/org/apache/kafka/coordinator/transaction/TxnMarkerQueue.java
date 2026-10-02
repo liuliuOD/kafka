@@ -81,7 +81,11 @@ public class TxnMarkerQueue {
     }
 
     public void forEachTxnTopicPartition(BiConsumer<Integer, BlockingQueue<PendingCompleteTxnAndMarkerEntry>> f) {
-        markersPerTxnTopicPartition.forEach(f);
+        markersPerTxnTopicPartition.forEach((partition, queue) -> {
+            if (!queue.isEmpty()) {
+                f.accept(partition, queue);
+            }
+        });
     }
 
     public int totalNumMarkers() {
