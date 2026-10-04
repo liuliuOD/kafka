@@ -191,17 +191,16 @@ public class ConsumerConfig extends AbstractConfig {
             "<p>Note that increasing a topic's partition count while this config is set to <code>latest</code> may cause silent " +
             "message loss: producers may begin appending records to a newly created partition before the consumer discovers it, " +
             "and <code>latest</code> resets the position to the log end offset, skipping any records produced during that discovery gap.</p>" +
-            "<p>To avoid this, prefer <code>by_duration:&lt;duration&gt;</code>. When a partition has no committed offset, " +
-            "<code>by_duration</code> determines the starting position by issuing a <code>ListOffsets</code> lookup for " +
-            "<code>now() - duration</code>. If the target timestamp is earlier than the partition's creation time, the lookup " +
-            "returns the partition's start offset, ensuring that records produced during the discovery window are still consumed. Size the duration to cover " +
-            "the worst-case partition-discovery latency for the group protocol in use:</p>" +
-            "<ul><li>With the <code>consumer</code> group protocol (KIP-848), newly assigned partitions are pushed on the next " +
-            "group heartbeat, so a value at least as large as <code>group.consumer.heartbeat.interval.ms</code> " +
-            "(server default 5000&nbsp;ms) is sufficient, for example <code>by_duration:PT5S</code>.</li>" +
-            "<li>With the <code>classic</code> group protocol, new partitions are discovered through periodic metadata refresh " +
-            "and a subsequent rebalance, so the duration must exceed <code>metadata.max.age.ms</code> (client default " +
-            "300000&nbsp;ms) plus the rebalance time, for example <code>by_duration:PT6M</code>.</li></ul>" +
+            "<p>When a partition has no committed offset, <code>by_duration:&lt;duration&gt;</code> can reduce this risk by " +
+            "issuing a <code>ListOffsets</code> lookup for <code>now() - duration</code>. The lookup compares the target " +
+            "with record timestamps, not the partition's creation time. With <code>CreateTime</code>, a newly appended " +
+            "record can have an older timestamp and be skipped if it precedes the target timestamp.</p>" +
+            "<p>Size the duration to account for partition discovery and rebalance delays as well as how far record timestamps " +
+            "can lag behind append time. Discovery delays depend on the group protocol and settings such as " +
+            "<code>group.consumer.heartbeat.interval.ms</code> and <code>metadata.max.age.ms</code>. " +
+            "A duration based only on discovery latency does not guarantee that all records in a new partition will be consumed. " +
+            "Use <code>earliest</code> to reset to the log start offset when all retained records must be read, " +
+            "accepting that other partitions requiring an offset reset may also replay retained records.</p>" +
             "<p>Consumers with a valid committed offset are unaffected. The reset applies only to partitions whose offset is " +
             "missing or out of range, so <code>by_duration</code> does not force existing consumers to replay historical data on restart.</p>";
 
