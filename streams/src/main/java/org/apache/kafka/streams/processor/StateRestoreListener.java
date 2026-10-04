@@ -57,9 +57,11 @@ public interface StateRestoreListener {
      * <p>Called for every active task that begins restoring, including one that has nothing to restore because its
      * local state is already up to date -- a task whose state was just built up as a standby or warm-up task, for
      * instance.
-     * In that case {@code startingOffset} equals {@code endingOffset} and
-     * {@link #onRestoreEnd(TopicPartition, String, long)} follows with a total of zero records restored, so an empty
-     * restoration is told apart by the offsets and the count rather than by the callbacks being skipped.
+     * In that case {@link #onRestoreEnd(TopicPartition, String, long)} follows with a total of zero records restored.
+     * The reported {@code startingOffset} and {@code endingOffset} are not guaranteed to be equal; for example,
+     * {@code startingOffset} can be zero if the initial consumer position lookup times out.
+     * Use the total number of records reported by {@code onRestoreEnd} to identify a completed restoration that
+     * restored no records, rather than assuming equal offsets or skipped callbacks.
      *
      * @param topicPartition
      *        the {@link TopicPartition} containing the values to restore
