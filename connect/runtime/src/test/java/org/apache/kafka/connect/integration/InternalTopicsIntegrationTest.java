@@ -39,6 +39,7 @@ import jakarta.ws.rs.core.Response;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -215,9 +216,7 @@ public class InternalTopicsIntegrationTest {
         // The worker is expected to fail startup, so shorten the request timeout to avoid
         // blocking for the default 10 seconds on every health check.
         connect.requestTimeout(1000);
-        assertFalse(connect.isHealthy(worker));
-        assertFalse(connect.allWorkersHealthy());
-        assertFalse(connect.anyWorkersHealthy());
+        assertWorkerIsNotHealthy(worker);
         connect.removeWorker(worker);
 
         // We rely upon the fact that we can change the worker properties before the workers are started
@@ -226,9 +225,7 @@ public class InternalTopicsIntegrationTest {
         // Try to start one worker, with two bad topics remaining
         worker = connect.addWorker(); // should have failed to start before returning
         connect.requestTimeout(1000);
-        assertFalse(connect.isHealthy(worker));
-        assertFalse(connect.allWorkersHealthy());
-        assertFalse(connect.anyWorkersHealthy());
+        assertWorkerIsNotHealthy(worker);
         connect.removeWorker(worker);
 
         // We rely upon the fact that we can change the worker properties before the workers are started
@@ -237,9 +234,7 @@ public class InternalTopicsIntegrationTest {
         // Try to start one worker, with one bad topic remaining
         worker = connect.addWorker(); // should have failed to start before returning
         connect.requestTimeout(1000);
-        assertFalse(connect.isHealthy(worker));
-        assertFalse(connect.allWorkersHealthy());
-        assertFalse(connect.anyWorkersHealthy());
+        assertWorkerIsNotHealthy(worker);
         connect.removeWorker(worker);
         // We rely upon the fact that we can change the worker properties before the workers are started
         workerProps.put(DistributedConfig.STATUS_STORAGE_TOPIC_CONFIG, "good-status");
@@ -367,5 +362,11 @@ public class InternalTopicsIntegrationTest {
 
     protected String statusTopic() {
         return workerProps.get(DistributedConfig.STATUS_STORAGE_TOPIC_CONFIG);
+    }
+
+    private void assertWorkerIsNotHealthy(WorkerHandle worker) {
+        try (Response response = connect.healthCheck(worker)) {
+            assertNotEquals(Response.Status.OK.getStatusCode(), response.getStatus());
+        }
     }
 }
