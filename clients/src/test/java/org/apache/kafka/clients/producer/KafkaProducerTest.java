@@ -19,6 +19,7 @@ package org.apache.kafka.clients.producer;
 import org.apache.kafka.clients.ApiVersions;
 import org.apache.kafka.clients.ClientDnsLookup;
 import org.apache.kafka.clients.ClientInstanceIdCapture;
+import org.apache.kafka.clients.ClientRequest;
 import org.apache.kafka.clients.ClientUtils;
 import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.KafkaClient;
@@ -1338,24 +1339,31 @@ public class KafkaProducerTest {
         ProducerMetadata metadata = newMetadata(0, 0, Long.MAX_VALUE);
         metadata.updateWithCurrentRequestVersion(initialUpdateResponse, false, time.milliseconds());
 
-        MockClient client = new MockClient(time, metadata);
+        AtomicBoolean completeInitialization = new AtomicBoolean(false);
+        // Prepare responses on the Sender thread so background retries cannot consume the wrong response.
+        MockClient client = new MockClient(time, metadata) {
+            @Override
+            public void send(ClientRequest request, long now) {
+                if (request.requestBuilder() instanceof FindCoordinatorRequest.Builder &&
+                        ((FindCoordinatorRequest.Builder) request.requestBuilder()).data().keyType() == FindCoordinatorRequest.CoordinatorType.TRANSACTION.id()) {
+                    prepareResponse(
+                        responseRequest -> responseRequest instanceof FindCoordinatorRequest,
+                        FindCoordinatorResponse.prepareResponse(Errors.NONE, "bad-transaction", NODE));
+                } else if (request.requestBuilder().apiKey() == ApiKeys.INIT_PRODUCER_ID && completeInitialization.get()) {
+                    prepareResponse(
+                        responseRequest -> responseRequest instanceof InitProducerIdRequest,
+                        initProducerIdResponse(1L, (short) 5, Errors.NONE));
+                }
+                super.send(request, now);
+            }
+        };
 
         try (Producer<String, String> producer = kafkaProducer(configs, new StringSerializer(),
                 new StringSerializer(), metadata, client, null, time)) {
-            client.prepareResponse(
-                request -> request instanceof FindCoordinatorRequest &&
-                    ((FindCoordinatorRequest) request).data().keyType() == FindCoordinatorRequest.CoordinatorType.TRANSACTION.id(),
-                FindCoordinatorResponse.prepareResponse(Errors.NONE, "bad-transaction", NODE));
-
             var timeoutEx = assertThrows(TimeoutException.class, producer::initTransactions);
             assertTrue(timeoutEx.getMessage().contains(INIT_TXN_TIMEOUT_MSG));
 
-            client.prepareResponse(
-                request -> request instanceof FindCoordinatorRequest &&
-                               ((FindCoordinatorRequest) request).data().keyType() == FindCoordinatorRequest.CoordinatorType.TRANSACTION.id(),
-                FindCoordinatorResponse.prepareResponse(Errors.NONE, "bad-transaction", NODE));
-
-            client.prepareResponse(initProducerIdResponse(1L, (short) 5, Errors.NONE));
+            completeInitialization.set(true);
 
             // retry initialization should work
             producer.initTransactions();
